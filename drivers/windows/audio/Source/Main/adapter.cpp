@@ -22,6 +22,7 @@ Abstract:
 #include "definitions.h"
 #include "endpoints.h"
 #include "minipairs.h"
+#include "loopback.h"
 
 typedef void (*fnPcDriverUnload) (PDRIVER_OBJECT);
 fnPcDriverUnload gPCDriverUnloadRoutine = NULL;
@@ -284,6 +285,9 @@ Return Value:
     WDF_DRIVER_CONFIG           config;
 
     DPF(D_TERSE, ("[DriverEntry]"));
+
+    // Longarm: the speaker-to-microphone ring (loopback.h).
+    LoopbackInitialize();
 
     // Copy registry Path name in a global variable to be used by modules inside driver.
     // !! NOTE !! Inside this function we are initializing the registrypath, so we MUST NOT add any failing calls

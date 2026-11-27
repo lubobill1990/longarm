@@ -27,7 +27,7 @@
         </ClCompile>
     </ItemGroup>
     <ItemGroup>
-        <ResourceCompile Include="VirtualAudioDriver.rc">
+        <ResourceCompile Include="LongarmAudio.rc">
             <Filter>Resource Files</Filter>
         </ResourceCompile>
     </ItemGroup>
