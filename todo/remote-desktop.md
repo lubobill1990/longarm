@@ -69,20 +69,15 @@ Screen Recording and Accessibility for the runner). Left out:
 
 ## Native remote desktop: the viewer's own title bar (UU Remote's features)
 
-Asked for (2026-11-27): in a window too, not only in full screen, the
-title bar is the viewer's own (drawn by it, like the full-screen bar in
-internal/screen/bar_windows.go), with:
+Asked for (2026-11-27). Done on Windows (internal/screen/bar_windows.go,
+privacy_windows.go): the security status, privacy mode, lock on leave,
+the display picker. Left:
 
-- **Security status**: the path (direct / relay), the encryption (mTLS,
-  end-to-end keys), that only the owner can connect.
-- **Privacy mode** (防窥): the worker's own monitor shows black while you
-  work on it. On Windows 10 2004+ the agent can cover the screen with a
-  click-through topmost window marked WDA_EXCLUDEFROMCAPTURE: the person
-  at the machine sees black, the capture sees the desktop under it.
-- **Auto-lock**: lock the worker's session when the viewer disconnects
-  (LockWorkStation from the agent in the console session).
-- **Several displays**: a picker in the bar (now `--display` only; the
-  proto has DesktopStart.display), later all displays at once.
+- **Privacy mode and lock on leave on Linux and macOS**: neither offers
+  them yet (rdesk's `can`; screen.NewCurtain and LockSession are
+  Windows-only). Locking: `loginctl lock-session` on Linux; macOS has no
+  supported call since CGSession went.
+- **All displays at once** (now one at a time, the picker switches).
 - **Audio**: the worker's sound played here (WASAPI loopback on the
   worker, playback here; a codec without cgo: PCM / ADPCM first). The
   local microphone on the worker needs a virtual audio device there

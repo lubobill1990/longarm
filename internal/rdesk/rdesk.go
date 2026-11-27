@@ -164,9 +164,9 @@ func (s *session) leave() {
 
 // can: what this worker offers (DesktopStarted.can).
 func (s *session) can() []string {
-	out := []string{"lock_on_leave"}
-	if runtime.GOOS == "windows" {
-		out = append(out, "privacy")
+	var out []string
+	if runtime.GOOS == "windows" { // elsewhere: todo/remote-desktop.md
+		out = append(out, "privacy", "lock_on_leave")
 	}
 	if s.clip != nil {
 		out = append(out, "clipboard")

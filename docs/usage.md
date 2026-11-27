@@ -1608,9 +1608,14 @@ GPU's encoder where there is one; JPEG tiles where H.264 is missing),
 with your mouse and keyboard. Win, Alt+Tab and Ctrl+Esc go to the worker
 while the window is in front; Ctrl+Alt+Enter toggles full screen (so do
 the maximize button and a double click on the title bar), Ctrl+Alt+End
-sends Ctrl+Alt+Del. In full screen a bar at the top (as Remote Desktop's)
-has a pin, minimize, leave full screen and close; unpinned it hides and
-comes back when the pointer touches the top of the screen. Text copied on
+sends Ctrl+Alt+Del. The window's title bar is the viewer's own: on the
+left how the worker is reached (direct or relay; end-to-end TLS; owner
+only), on the right privacy mode (Windows workers: their own screen
+shows black while you work, the picture here does not), lock the worker
+when you disconnect, a display picker when the worker has several,
+minimize, full screen and close; drag it to move the window. In full
+screen it is a bar at the top (as Remote Desktop's) with a pin; unpinned
+it hides and comes back when the pointer touches the top of the screen. Text copied on
 either side can be pasted on the other (Windows workers and viewers; not
 while only watching). Only the worker's owner may connect
 (an admin certificate of somebody else is refused); every connection is
@@ -1630,6 +1635,7 @@ login window are not shown.
 longarm desktop w1                          # Longarm's remote desktop where it works, else as below
 longarm desktop w1 --view-only              # watch only
 longarm desktop w1 --display 1              # the second display
+longarm desktop w1 --privacy --lock-on-leave  # its screen black meanwhile, locked when you go
 longarm desktop w1 --screenshot w1.png      # save a picture of its screen (no window)
 longarm desktop w1 --screenshot after.png --input "click:400,300;text:hello;key:0x1C"
 longarm desktop w1 --rdp                    # Remote Desktop / Windows App instead
