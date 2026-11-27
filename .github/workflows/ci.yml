@@ -352,6 +352,8 @@ jobs:
       # linked in), newer than every release, for the install / upgrade tests (job msi-install).
       - name: binaries
         run: |
+          go run ./packaging/icons # the exes' icon resources (not checked in)
+          if ($LASTEXITCODE) { throw 'go run ./packaging/icons' }
           $env:CGO_ENABLED = '0'
           foreach ($v in '0.250.0', '0.250.1') {
             $bin = Join-Path $env:RUNNER_TEMP "msi-bin-$v"

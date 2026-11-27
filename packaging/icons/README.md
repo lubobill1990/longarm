@@ -16,7 +16,10 @@ Explorer and Task Manager show they belong together):
 
 - every Windows exe: `cmd/<tool>/rsrc_windows_{amd64,arm64}.syso` (Windows
   resource objects; `go build` links them in) for `longarm`, `longarmd`,
-  `longarm-tray`, `longarm-update`, `longarm-hub`, `longarm-relay`;
+  `longarm-tray`, `longarm-update`, `longarm-hub`, `longarm-relay`. They are
+  generated, not checked in (no binaries in the repository): GoReleaser's before
+  hook, CI and `build-msi.ps1` run `go run ./packaging/icons` first; a plain
+  `go build` without them makes an exe without the icon;
 - the MSI (`packaging/windows/longarm.wxs`): Add/Remove Programs
   (`ARPPRODUCTICON`) and the Start menu shortcut - which is also what the tray's
   notifications show;
@@ -32,7 +35,7 @@ Replace a master (PNG, square, transparent background; keep the small one a
 simplification of the big one) and regenerate:
 
 ```sh
-go run ./packaging/icons      # writes longarm.ico, the .syso files and web/public/favicon.png
+go run ./packaging/icons      # writes longarm.ico, the .syso files (gitignored) and web/public/favicon.png
 node web/build.mjs            # the embedded web UI (internal/webui/dist) picks up the favicon
 ```
 

@@ -8,7 +8,9 @@
 // shortcut), the Windows resource objects that put that icon into the exes
 // (cmd/<tool>/rsrc_windows_<arch>.syso, linked in by go build) and the web
 // UI's favicon (web/public/favicon.png). Run it from the repository root
-// after changing a master and commit what it wrote:
+// after changing a master and commit longarm.ico and favicon.png; the .syso
+// files are gitignored and the builds run it to make them (GoReleaser's
+// before hook, CI, build-msi.ps1):
 //
 //	go run ./packaging/icons
 package main

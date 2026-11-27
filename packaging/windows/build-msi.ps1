@@ -72,6 +72,15 @@ if (-not (Test-Path $helper)) {
 # the other binaries; without a key the service installs nothing). Needs Go.
 $updater = Join-Path (Resolve-Path $BinDir).Path 'longarm-update.exe'
 if (-not (Test-Path $updater)) {
+  # its icon resource (not checked in; GoReleaser's before hook makes it for the other exes)
+  $repo = Join-Path $PSScriptRoot '..\..'
+  if (-not (Test-Path (Join-Path $repo 'cmd\longarm-update\rsrc_windows_amd64.syso'))) {
+    Push-Location $repo
+    try {
+      & go run ./packaging/icons | Out-Null
+      if ($LASTEXITCODE -ne 0) { throw "go run ./packaging/icons failed ($LASTEXITCODE)" }
+    } finally { Pop-Location }
+  }
   $goArch = @{ x64 = 'amd64'; arm64 = 'arm64' }[$Arch]
   $env:GOOS, $env:GOARCH, $env:CGO_ENABLED = 'windows', $goArch, '0'
   $pub = "$env:LONGARM_UPDATE_PUBKEY".Trim()
