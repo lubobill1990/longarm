@@ -1,0 +1,11 @@
+{
+  "name": "longarm-core",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Capacitor plugin: starts the Longarm Go core (Longarm.xcframework, gomobile bind of mobile/core) and gives its page's URL. Android's is in the app (MainActivity).",
+  "capacitor": {
+    "ios": {
+      "src": "ios"
+    }
+  }
+}

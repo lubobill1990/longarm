@@ -1,0 +1,99 @@
+<!doctype html>
+<!-- The phone core's spike page (docs/mobile.md phase 0): sign in, your
+     machines, their sessions, a terminal. Phase 1 replaces it with the
+     React app (web/). -->
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Longarm</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@6.0.0/css/xterm.css">
+<style>
+  body { font: 15px -apple-system, system-ui, sans-serif; margin: 0; padding: env(safe-area-inset-top) 12px 12px; background: #f6f5f2; color: #222; }
+  h1 { font-size: 20px; margin: 12px 0; }
+  button { font: inherit; padding: 8px 14px; border-radius: 8px; border: 1px solid #0b6b6b; background: #0b6b6b; color: #fff; }
+  .card { background: #fff; border-radius: 10px; padding: 10px 12px; margin: 8px 0; box-shadow: 0 1px 2px #0002; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 4px; margin-right: 6px; background: #bbb; }
+  .on { background: #2e9d5b; }
+  .muted { color: #777; font-size: 13px; }
+  #term { height: 60vh; display: none; }
+  code { font-size: 22px; letter-spacing: 2px; }
+</style>
+</head>
+<body>
+<h1>Longarm</h1>
+<div id="main" class="muted">…</div>
+<div id="term"></div>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@6.0.0/lib/xterm.js"></script>
+<script>
+const t = new URLSearchParams(location.search).get('t')
+const api = (p, o = {}) => fetch(p, { ...o, headers: { 'X-Longarm-Token': t, 'Content-Type': 'application/json' } })
+const main = document.getElementById('main')
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c])
+
+async function home() {
+  const st = await (await api('/api/status')).json()
+  if (!st.signedIn) return signInView(st)
+  main.innerHTML = `<div class="muted">${esc(st.user)} · ${esc(st.hub)} · ${esc(st.version)}</div><div id="list">Loading machines…</div>`
+  const r = await api('/api/machines')
+  if (!r.ok) { document.getElementById('list').textContent = await r.text(); return }
+  const ms = await r.json()
+  document.getElementById('list').innerHTML = ms.map((m) =>
+    `<div class="card" onclick="machine('${esc(m.name)}')"><span class="dot ${m.online ? 'on' : ''}"></span><b>${esc(m.name)}</b>
+     <div class="muted">${esc(m.os)} · ${esc(m.version)}${m.admin ? ' · admin' : ''}${m.online ? '' : ' · offline'}</div></div>`).join('') || 'No machines of yours.'
+}
+
+function signInView(st) {
+  main.innerHTML = `<p>Sign this phone in to Longarm.</p>${st.error ? `<p class="muted">${esc(st.error)}</p>` : ''}
+    <input id="hub" placeholder="hub (e.g. longarm.example.com)" style="font:inherit;padding:8px;width:100%;box-sizing:border-box;margin-bottom:8px">
+    <button onclick="signIn()">Sign in</button><div id="si"></div>`
+}
+
+async function signIn() {
+  await api('/api/signin', { method: 'POST', body: JSON.stringify({ hub: document.getElementById('hub').value, name: 'phone' }) })
+  const si = document.getElementById('si')
+  for (;;) {
+    const s = await (await api('/api/signin')).json()
+    si.innerHTML = `<p class="muted">${esc(s.message || s.step)}</p>` +
+      (s.code ? `<p>Open <a href="${esc(s.url)}" target="_blank">${esc(s.url)}</a>, sign in and enter</p><p><code>${esc(s.code)}</code></p>` : '') +
+      (s.error ? `<p>${esc(s.error)}</p>` : '')
+    if (s.done) { if (!s.error) home(); return }
+    await new Promise((r) => setTimeout(r, 1000))
+  }
+}
+
+async function machine(name) {
+  main.innerHTML = `<button onclick="home()">‹ Machines</button><h1>${esc(name)}</h1><div id="ss">Connecting…</div>`
+  const r = await api(`/api/machines/${encodeURIComponent(name)}/sessions`)
+  if (!r.ok) { document.getElementById('ss').textContent = await r.text(); return }
+  const ss = (await r.json()).sessions || []
+  document.getElementById('ss').innerHTML = ss.map((s) =>
+    `<div class="card" onclick="attach('${esc(name)}','${esc(s.name)}')"><b>${esc(s.name)}</b><div class="muted">${esc(s.command || '')}</div></div>`).join('') || 'No sessions.'
+}
+
+function attach(worker, name) {
+  main.innerHTML = `<button onclick="location.reload()">‹ Back</button> <b>${esc(worker)}</b> / ${esc(name)}`
+  const el = document.getElementById('term')
+  el.style.display = 'block'
+  const term = new Terminal({ fontSize: 13, cursorBlink: true })
+  term.open(el)
+  const ws = new WebSocket(`ws://${location.host}/api/machines/${encodeURIComponent(worker)}/sessions/${encodeURIComponent(name)}/attach?t=${t}&cols=${term.cols}&rows=${term.rows}`)
+  ws.binaryType = 'arraybuffer'
+  ws.onmessage = (e) => {
+    if (typeof e.data === 'string') {
+      const m = JSON.parse(e.data)
+      if (m.type === 'error') term.write(`\r\n[${m.message}]\r\n`)
+      if (m.type === 'exit') term.write(`\r\n[exited ${m.code}]\r\n`)
+      return
+    }
+    term.write(new Uint8Array(e.data))
+  }
+  ws.onclose = () => term.write('\r\n[disconnected]\r\n')
+  const enc = new TextEncoder()
+  term.onData((d) => ws.readyState === 1 && ws.send(enc.encode(d)))
+}
+
+home()
+</script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Longarm</string>
+    <string name="title_activity_main">Longarm</string>
+    <string name="package_name">com.weavejam.longarm</string>
+    <string name="custom_url_scheme">com.weavejam.longarm</string>
+</resources>

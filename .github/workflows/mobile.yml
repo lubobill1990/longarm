@@ -1,0 +1,89 @@
+# The Longarm phone app (docs/mobile.md): the Go core bound with gomobile
+# (mobile/core) and the Capacitor app (mobile/app) built for Android (an
+# APK) and the iOS simulator - launched there, its screen an artifact.
+name: mobile
+
+on:
+  pull_request:
+    paths: ['mobile/**', 'internal/mobile/**', 'internal/termws/**', '.github/workflows/mobile.yml']
+  push:
+    branches: [main]
+    paths: ['mobile/**', 'internal/mobile/**', 'internal/termws/**', '.github/workflows/mobile.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: mobile/go.sum
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Go core (gomobile bind)
+        working-directory: mobile
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@"$(go list -m -f '{{.Version}}' golang.org/x/mobile)"
+          export ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME"
+          mkdir -p app/android/app/libs
+          gomobile bind -target=android/arm64,android/amd64 -androidapi 24 -ldflags '-s -w' -o app/android/app/libs/longarm.aar ./core
+          ls -l app/android/app/libs
+      - name: App
+        working-directory: mobile/app
+        run: |
+          npm ci
+          npx cap sync android
+          cd android && ./gradlew assembleDebug --no-daemon -q
+          ls -l app/build/outputs/apk/debug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: longarm-android-debug
+          path: mobile/app/android/app/build/outputs/apk/debug/app-debug.apk
+
+  ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: mobile/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Go core (gomobile bind)
+        working-directory: mobile
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@"$(go list -m -f '{{.Version}}' golang.org/x/mobile)"
+          gomobile bind -target=ios,iossimulator -ldflags '-s -w' -o app/plugins/longarm-core/ios/Longarm.xcframework ./core
+          du -sh app/plugins/longarm-core/ios/Longarm.xcframework/*
+      - name: App (simulator)
+        working-directory: mobile/app
+        run: |
+          npm ci
+          npx cap sync ios
+          xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath build CODE_SIGNING_ALLOWED=NO build -quiet
+      - name: Run in the simulator
+        working-directory: mobile/app
+        run: |
+          dev=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; print(next(x["udid"] for k,v in d.items() if "iOS" in k for x in v if x["name"].startswith("iPhone")))')
+          xcrun simctl boot "$dev"
+          xcrun simctl install "$dev" build/Build/Products/Debug-iphonesimulator/App.app
+          xcrun simctl launch "$dev" com.weavejam.longarm
+          sleep 25
+          xcrun simctl io "$dev" screenshot ios-simulator.png
+      - uses: actions/upload-artifact@v4
+        with:
+          name: longarm-ios-simulator
+          path: mobile/app/ios-simulator.png
