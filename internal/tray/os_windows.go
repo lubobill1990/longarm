@@ -129,3 +129,9 @@ func RunElevatedWait(exe string, args ...string) error {
 	}
 	return nil
 }
+
+// hideConsole: a console program started from the tray gets no console
+// window (CREATE_NO_WINDOW).
+func hideConsole(cmd *exec.Cmd) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000}
+}

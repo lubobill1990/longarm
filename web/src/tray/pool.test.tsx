@@ -194,13 +194,13 @@ describe('PoolTab', () => {
     expect(bodies).toEqual(['cpc-alice-x7k2q', 'cpc-alice-x7k2q-admin'])
     // desktop: the session worker (longarm desktop picks Windows App for a Dev Box)
     fireEvent.click(within(card).getByLabelText('more actions')) // desktop: in the menu
-    fireEvent.click(within(card).getByText('Desktop (Remote Desktop / Windows App)'))
+    fireEvent.click(within(card).getByText('Desktop'))
     await waitFor(() => expect(calls.filter((c) => c.url === '/trayapi/desktop').map((c) => JSON.parse(String(c.init?.body)).worker)).toEqual(['cpc-alice-x7k2q']))
     // not an admin: no drain; the fleet worker isn't hers to remove (its menu: ssh only)
     expect(within(card).queryByText('drain')).toBeNull()
     const fleet = screen.getByTestId('worker-fleet-1')
     fireEvent.click(within(fleet).getByLabelText('more actions'))
-    expect(within(fleet).getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['SSH fleet-1 (a plain SSH login)', 'Desktop (Remote Desktop / Windows App)'])
+    expect(within(fleet).getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['SSH fleet-1 (a plain SSH login)', 'Desktop'])
     // remove an old registration of hers from the collapsed section
     fireEvent.click(within(screen.getByTestId('offline-old-pc')).getByText('Remove'))
     expect(confirm).toHaveBeenCalledWith(expect.stringContaining('Remove old-pc from the hub?'))

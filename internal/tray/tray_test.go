@@ -263,6 +263,8 @@ func TestServer(t *testing.T) {
 	var opened []string
 	var ran [][]string
 	s.term = func(argv []string) error { term = append(term, argv); return nil }
+	var gui [][]string
+	s.gui = func(argv []string) error { gui = append(gui, argv); return nil }
 	s.openURL = func(u string) error { opened = append(opened, u); return nil }
 	s.runCmd = func(name string, args ...string) ([]byte, error) {
 		ran = append(ran, append([]string{name}, args...))
@@ -401,8 +403,9 @@ func TestServer(t *testing.T) {
 		t.Fatalf("bad desktop worker accepted: %d", code)
 	}
 	post("/trayapi/desktop", "application/json", `{"worker":"w1"}`)
-	if strings.Join(term[2], " ") != "longarm --config-dir "+cfg+" desktop w1" {
-		t.Fatalf("desktop: %v", term)
+	// the viewer has a window of its own: no terminal
+	if len(term) != 2 || len(gui) != 1 || strings.Join(gui[0], " ") != "longarm --config-dir "+cfg+" desktop w1" {
+		t.Fatalf("desktop: terminals %v, windows %v", term, gui)
 	}
 	if code, _ := post("/trayapi/open", "application/json", `{"url":"file:///etc/passwd"}`); code != 400 {
 		t.Fatalf("file url opened: %d", code)

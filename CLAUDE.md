@@ -13,6 +13,17 @@ working on an area; delete an item in the pull request that finishes it;
 add one when you leave something undone deliberately (not only in the
 pull request description).
 
+## The tray: no terminals people don't need
+
+The tray is for people who never open a terminal. A tray action whose
+result is a window of its own - the remote desktop viewer, a browser page,
+an installer - starts without any terminal or console window
+(`tray.RunWindowed`), and its failure comes back to the tray as a message
+it shows, never as text in a console that flashes and closes. A terminal
+opens only when the terminal is what the user asked for (attach, ssh).
+New tray actions follow this; a test asserts which ones may open one
+(internal/tray/tray_test.go).
+
 ## Releasing
 
 Every merge to `main` publishes a dev build; release candidates and

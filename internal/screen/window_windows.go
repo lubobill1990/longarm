@@ -44,21 +44,28 @@ var (
 	procReleaseCapture        = modUser32.NewProc("ReleaseCapture")
 	procDestroyWindow         = modUser32.NewProc("DestroyWindow")
 	procSetCursor             = modUser32.NewProc("SetCursor")
+	procGetSystemMenu         = modUser32.NewProc("GetSystemMenu")
+	procAppendMenuW           = modUser32.NewProc("AppendMenuW")
 )
 
 const (
-	wmDestroy      = 0x0002
-	wmSize         = 0x0005
-	wmKillFocus    = 0x0008
-	wmClose        = 0x0010
-	wmEraseBkgnd   = 0x0014
-	wmSetCursor    = 0x0020
-	wmQuit         = 0x0012
-	wmKeyDown      = 0x0100
-	wmKeyUp        = 0x0101
-	wmSysKeyDown   = 0x0104
-	wmSysKeyUp     = 0x0105
-	wmSysChar      = 0x0106
+	wmDestroy    = 0x0002
+	wmSize       = 0x0005
+	wmKillFocus  = 0x0008
+	wmClose      = 0x0010
+	wmEraseBkgnd = 0x0014
+	wmSetCursor  = 0x0020
+	wmQuit       = 0x0012
+	wmKeyDown    = 0x0100
+	wmKeyUp      = 0x0101
+	wmSysKeyDown = 0x0104
+	wmSysKeyUp   = 0x0105
+	wmSysChar    = 0x0106
+	wmSysCommand = 0x0112
+	scMaximize   = 0xF030
+	// menuFullscreen: our item in the window menu (system command ids are
+	// below 0xF000 and multiples of 16)
+	menuFullscreen = 0x0010
 	wmMouseMove    = 0x0200
 	wmLButtonDown  = 0x0201
 	wmLButtonUp    = 0x0202
@@ -174,6 +181,12 @@ func NewWindow(title string, w, h int, takeKeys bool) (*Window, error) {
 		return nil, err
 	}
 	win.HWND = windows.HWND(hwnd)
+	// The window menu (Alt+Space, the title bar's icon) offers full screen too.
+	if m, _, _ := procGetSystemMenu.Call(hwnd, 0); m != 0 {
+		label, _ := windows.UTF16PtrFromString("Full screen	Ctrl+Alt+Enter")
+		procAppendMenuW.Call(m, 0x0800 /* MF_SEPARATOR */, 0, 0)
+		procAppendMenuW.Call(m, 0, menuFullscreen, uintptr(unsafe.Pointer(label)))
+	}
 	procShowWindow.Call(hwnd, swShow)
 	if takeKeys {
 		win.hook, _, _ = procSetWindowsHookExW.Call(whKeyboardLL, windows.NewCallback(keyboardHook), 0, 0)
@@ -365,6 +378,13 @@ func wndProc(hwnd, message, wParam, lParam uintptr) uintptr {
 		}
 		w.key(scan, message == wmKeyDown || message == wmSysKeyDown)
 		return 0
+	case wmSysCommand:
+		// Maximizing (the button, a double click on the title bar) goes full
+		// screen, as Remote Desktop's window does; so does our menu item.
+		if c := wParam & 0xFFF0; c == scMaximize && !w.fullscreen || wParam == menuFullscreen {
+			w.ToggleFullscreen()
+			return 0
+		}
 	case wmSysChar:
 		return 0 // no menu beep for Alt+key
 	}

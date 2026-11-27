@@ -68,6 +68,9 @@ const (
 	slotMFTGetOutputCurrentType = 18
 
 	mftMsgSetD3DManager = 2
+
+	slotCtxClearState = 110
+	slotCtxFlush      = 111
 )
 
 type swapChainDesc1 struct {
@@ -268,7 +271,6 @@ func (p *Presenter) Resize() error {
 }
 
 func (p *Presenter) flushContext() {
-	const slotCtxClearState, slotCtxFlush = 110, 111
 	comCall(p.ctx, slotCtxClearState)
 	comCall(p.ctx, slotCtxFlush)
 }

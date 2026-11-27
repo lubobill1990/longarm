@@ -39,7 +39,7 @@ const AGENTS: [string, string, string][] = [
 export interface CardActions {
   attach?: (w: string) => void
   ssh?: (w: string) => void
-  /** longarm desktop: Windows App for a Dev Box, Remote Desktop otherwise (Windows workers) */
+  /** longarm desktop: Longarm's own remote desktop, else Windows App (Dev Box) / Remote Desktop */
   desktop?: (w: string) => void
   /** longarm admin drain / undrain: admins only (leave it unset for others) */
   drain?: (w: string, on: boolean) => void
@@ -235,8 +235,9 @@ export function WorkerCard({ w, m, actions, now = Date.now() }: { w?: PoolWorker
   // attach is the terminal (a session that outlives its window); ssh - a plain
   // login for scp, port forwards, editors' remote - is in the menu
   if (session && actions?.ssh) menuItems.push([`SSH ${session.name} (a plain SSH login)`, () => actions.ssh!(session.name)])
-  if (session && actions?.desktop && (session.node?.os ?? 'windows') === 'windows')
-    menuItems.push(['Desktop (Remote Desktop / Windows App)', () => actions.desktop!(session.name)])
+  // Longarm's own remote desktop on every OS (else Remote Desktop / Windows App)
+  if (session && actions?.desktop)
+    menuItems.push(['Desktop', () => actions.desktop!(session.name)])
   if (session && actions?.drain)
     menuItems.push([session.node?.admin_drain ? 'Resume (take jobs again)' : 'Drain (no new jobs)', () => actions.drain!(session.name, !session.node?.admin_drain)])
   if (admin && actions?.attach) menuItems.push([`Run as admin (attach ${admin.name})`, () => actions.attach!(admin.name)])
