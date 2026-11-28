@@ -67,6 +67,24 @@ attach to their terminal sessions, see and use their desktops. TestFlight
 | 2. Desktop | the native viewer: touch modes (trackpad, direct), zoom, keyboard, options; mobile data: lower fps and bitrate | |
 | 3. Polish | Face ID / fingerprint lock, notifications (APNs/FCM through the hub), sound | |
 
+## TestFlight
+
+`mobile.yml`'s `testflight` job (pushes to main, manual runs) builds the
+core for devices, archives the app signed for the App Store and uploads it
+to App Store Connect; TestFlight then offers it to the team's testers. It
+runs once the repository has:
+
+- variables `LONGARM_IOS_APP_ID` (the real app id; the tree has the
+  placeholder `dev.longarm.app`) and `APPLE_TEAM_ID`;
+- secrets `APPLE_IOS_DIST_P12` / `APPLE_IOS_DIST_P12_PASSWORD` (an Apple
+  Distribution certificate and key), `APPLE_IOS_PROFILE` (an App Store
+  provisioning profile for the app id), and `APPLE_NOTARY_*` (an App Store
+  Connect API key that may upload: the macOS notarization one).
+
+The version is the last tag's x.y.z, the build number the run number.
+Without them the job says so and does nothing. The app record in App Store
+Connect is created by hand once (the API can't).
+
 ## Notes
 
 - `mobile/` is its own Go module (`longarm/mobile`): gomobile needs
