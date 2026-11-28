@@ -27,3 +27,4 @@ pull request description.
 | [tray-signin.md](tray-signin.md) | the tray's sign-in state: refused admin workers, per-part expiry, reconnects |
 | [security.md](security.md) | security review follow-ups that change behaviour or need a design |
 | [programs.md](programs.md) | programs driving Longarm: features, fixtures, session input (docs/programs.md) |
+| [mobile.md](mobile.md) | the phone app (docs/mobile.md) |

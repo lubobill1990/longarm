@@ -1,0 +1,211 @@
+/* The phone app's shell (MobileApp): the tray's tokens and cards, full width,
+   room for the notch and the home indicator. */
+
+.m-app {
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
+  box-sizing: border-box;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.m-head {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+.m-back {
+  font-size: 28px;
+  line-height: 1;
+  padding: 0 8px 4px 0;
+  background: none;
+  border: none;
+  color: var(--accent);
+}
+.m-title {
+  flex: 1;
+  min-width: 0;
+}
+.m-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.m-sub {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.m-body {
+  padding: 12px 14px 24px;
+}
+.m-body .cards {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr); /* one card a row (styles.css: 420px columns) */
+  gap: 10px;
+}
+.m-body .wcard {
+  min-width: 0;
+}
+.m-foot {
+  margin-top: 18px;
+  text-align: center;
+}
+.m-link {
+  background: none;
+  border: none;
+  color: var(--accent);
+  padding: 6px 4px;
+}
+
+.m-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+  font: inherit;
+}
+.m-btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink, #fff);
+}
+.m-btn.small {
+  padding: 7px 10px;
+  font-size: 13px;
+}
+.m-btn:disabled {
+  opacity: 0.55;
+}
+.m-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.m-field {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+.m-field input {
+  font: inherit;
+  font-size: 16px; /* no zoom on focus (iOS) */
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+}
+
+.m-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  margin: 10px 0;
+}
+.m-code p {
+  margin: 0 0 8px;
+  word-break: break-all;
+}
+.m-codeval {
+  font-size: 26px;
+  letter-spacing: 3px;
+}
+.m-session {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.m-sinfo {
+  flex: 1;
+  min-width: 0;
+}
+.m-sinfo .mono {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* the terminal page: header, terminal, key bar in the visible height */
+.m-app[data-route='terminal'] {
+  padding-bottom: 0;
+}
+.m-termpage {
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  padding-top: env(safe-area-inset-top);
+  box-sizing: border-box;
+  background: var(--bg);
+}
+.m-term {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.m-term .term-wrap {
+  flex: 1;
+  min-height: 0;
+  border: none;
+  border-radius: 0;
+  padding: 4px;
+}
+.m-back {
+  min-width: 36px;
+}
+.m-keybar {
+  border-top: 1px solid var(--border);
+  background: var(--card);
+  padding: 6px 6px calc(6px + env(safe-area-inset-bottom));
+}
+.m-keys {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 6px;
+  scrollbar-width: none;
+}
+.m-key {
+  flex: none;
+  min-width: 40px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font: 13px var(--mono, monospace);
+}
+.m-key.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink, #fff);
+}
+.m-type {
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 16px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+}

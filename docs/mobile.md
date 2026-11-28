@@ -51,10 +51,37 @@ attach to their terminal sessions, see and use their desktops. TestFlight
   account and approve; the phone gets a device certificate of its own,
   kept in the app's private storage (later: the key in the Keychain /
   Keystore).
-- **API** (`internal/mobile`): `GET /api/status`, `POST|GET /api/signin`,
-  `GET /api/machines`, `GET /api/machines/{w}/sessions`,
-  `GET /api/machines/{w}/sessions/{name}/attach` (WebSocket,
-  internal/termws - the daemon's terminal protocol).
+- **The UI** is the web frontend's `/m` shell (web/src/mobile, embedded
+  as internal/webui): the tray's machine cards (metrics, state, versions;
+  charts from the samples the page has seen), a machine's sessions with
+  "New terminal" (the worker's shell; Claude Code / Copilot CLI with the
+  worker's own sign-in), the terminal (TerminalView) with a key bar - Esc,
+  Tab, Ctrl / Alt for the next key, arrows, Home / End, PgUp / PgDn - and
+  an input the soft keyboard types into (xterm's own input doubles letters
+  with Android keyboards). Routes are the URL's hash: the back gesture
+  works.
+- **API** (`internal/mobile`, the token as a cookie the page's URL set):
+  `GET /mapi/status`, `POST|GET /mapi/signin`, `POST /mapi/signout`,
+  `GET /mapi/machines` (the user's workers' NodeInfo), and the longarm
+  daemon's session routes at the same paths -
+  `/local/longarm/v1/workers/{w}/sessions` (list, start), `.../{name}`,
+  `.../{name}/stop`, `.../{name}/attach` (WebSocket, internal/termws) - so
+  web/src/api/sessions.ts serves both.
+- **The desktop** is native: the page links to
+  `longarm-native://desktop?worker=W` (only when the app's URL says
+  `desktop=1`), which the LongarmCore plugin catches (`shouldOverrideLoad`)
+  and opens the viewer - Android `DesktopActivity` (MediaCodec into a
+  TextureView), iOS `DesktopViewController` (Annex B rewritten as AVCC
+  sample buffers for an AVSampleBufferDisplayLayer). Both use
+  `core.OpenDesktop` (internal/mobile/desktop.go: RemoteDesktop.Stream,
+  H.264 only, acks for flow control, a new stream after a session
+  switch). The phone is a trackpad: drag moves the pointer, tap clicks,
+  two-finger tap right-clicks, two-finger drag scrolls, long press then
+  drag drags, pinch zooms (the view follows the pointer). The keyboard
+  button opens the soft keyboard: text goes as Unicode, the IME's
+  composing text as it changes (Backspace over what changed), Backspace /
+  Enter / arrows as keys; the bar has Esc, the Windows key and
+  Ctrl+Alt+Del.
 - `go run ./internal/mobile/devserve -dir <config dir>` runs the core on a
   computer, for working on the UI.
 
@@ -63,8 +90,8 @@ attach to their terminal sessions, see and use their desktops. TestFlight
 | Phase | What | State |
 |---|---|---|
 | 0. Spike | the Go core bound for Android and iOS, its size, longnet and the relay on a phone, sign-in | done (2026-11-28): Android emulator - machines from the hub, terminal attach to a Windows worker; iOS simulator - the core starts, the page loads (mobile.yml). Android core 12 MB compressed / 35 MB installed (arm64). Left for a device: the browser sign-in, longnet on mobile data |
-| 1. MVP | the app shell, machines, terminal with a key bar (Esc, Tab, Ctrl, Alt, arrows); TestFlight, APK | |
-| 2. Desktop | the native viewer: touch modes (trackpad, direct), zoom, keyboard, options; mobile data: lower fps and bitrate | |
+| 1. MVP | the app shell, machines, terminal with a key bar (Esc, Tab, Ctrl, Alt, arrows); TestFlight, APK | done (2026-11-28): machine cards with metrics, sessions, new terminal / Claude Code / Copilot CLI, the terminal with the key bar; TestFlight from main |
+| 2. Desktop | the native viewer: touch modes (trackpad, direct), zoom, keyboard, options; mobile data: lower fps and bitrate | trackpad, zoom, keyboard, Esc / Win / Ctrl+Alt+Del done (2026-11-28; Android emulator end to end, iOS builds in CI); the rest: todo/mobile.md |
 | 3. Polish | Face ID / fingerprint lock, notifications (APNs/FCM through the hub), sound | |
 
 ## TestFlight

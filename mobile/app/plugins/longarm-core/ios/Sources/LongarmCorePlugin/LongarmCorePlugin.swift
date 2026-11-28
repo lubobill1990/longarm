@@ -1,10 +1,14 @@
 import Capacitor
 import Foundation
 import Longarm
+import UIKit
+import WebKit
 
 /// Starts the Longarm Go core (mobile/core) with its config in the app's
 /// Application Support directory and resolves with its page's URL
-/// (127.0.0.1, token included), which the loader page opens.
+/// (127.0.0.1, token included; desktop=1: this app has the native desktop
+/// viewer), which the loader page opens. The page's
+/// longarm-native://desktop?worker=W links open DesktopViewController.
 @objc(LongarmCorePlugin)
 public class LongarmCorePlugin: CAPPlugin, CAPBridgedPlugin {
     public let identifier = "LongarmCorePlugin"
@@ -24,6 +28,10 @@ public class LongarmCorePlugin: CAPPlugin, CAPBridgedPlugin {
             NSLog("LongarmCore: working directory %@: back to /", cwd)
             FileManager.default.changeCurrentDirectoryPath("/")
         }
+        // iOS ends an app's connections while it is away: dial again on return
+        NotificationCenter.default.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: nil) { _ in
+            DispatchQueue.global(qos: .utility).async { CoreReconnect() }
+        }
     }
 
     @objc func start(_ call: CAPPluginCall) {
@@ -38,11 +46,23 @@ public class LongarmCorePlugin: CAPPlugin, CAPBridgedPlugin {
                     call.reject(err.localizedDescription)
                     return
                 }
-                NSLog("LongarmCore: started at %@", url.components(separatedBy: "?").first ?? "")
-                call.resolve(["url": url])
+                call.resolve(["url": url + "&desktop=1"])
             } catch {
                 call.reject(error.localizedDescription)
             }
         }
+    }
+
+    override public func shouldOverrideLoad(_ navigationAction: WKNavigationAction) -> NSNumber? {
+        guard let url = navigationAction.request.url, url.scheme == "longarm-native" else { return nil }
+        if url.host == "desktop",
+           let worker = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "worker" })?.value {
+            DispatchQueue.main.async {
+                let vc = DesktopViewController(worker: worker)
+                vc.modalPresentationStyle = .fullScreen
+                self.bridge?.viewController?.present(vc, animated: true)
+            }
+        }
+        return true
     }
 }
