@@ -10,6 +10,7 @@ import (
 
 	"google.golang.org/grpc"
 
+	"longarm/internal/rdesk/quality"
 	pb "longarm/proto/longarm/v1"
 )
 
@@ -29,6 +30,10 @@ type DesktopEvents interface {
 	Frame(data []byte, key bool, seq uint64)
 	// Cursor moved or changed; shape (BGRA, w×h, hot spot) when it changed.
 	Cursor(x, y int, visible bool, shapeID uint64, w, h, hotX, hotY int, bgra []byte)
+	// Quality: the picture quality in force, after Started (the worker's
+	// DesktopStarted: the preset asked for, auto's level now, the frame
+	// rate and bitrate); preset "" from a worker without quality presets.
+	Quality(preset, level string, fps, kbps int)
 	// Note: something to show for a while ("UAC prompt…", a session switch).
 	Note(text string)
 	// Ended: the stream is over ("" when closed by Close).
@@ -38,8 +43,9 @@ type DesktopEvents interface {
 // DesktopOptions: what the viewer asks for.
 type DesktopOptions struct {
 	Display     int
-	MaxFPS      int // 0: 30
-	BitrateKbps int // 0: the worker's choice
+	MaxFPS      int    // 0: 30
+	BitrateKbps int    // 0: the worker's choice
+	Quality     string // a preset (internal/rdesk/quality): "auto" follows the link
 	ViewOnly    bool
 }
 
@@ -50,6 +56,7 @@ type Desktop struct {
 	mu     sync.Mutex
 	st     pb.RemoteDesktop_StreamClient
 	closed atomic.Bool
+	preset string // the quality asked for last (a new stream starts with it); under mu
 }
 
 // OpenDesktop opens a worker's desktop (one of the user's own).
@@ -62,13 +69,22 @@ func (c *Core) OpenDesktop(worker string, o DesktopOptions, ev DesktopEvents) (*
 	if o.MaxFPS <= 0 {
 		o.MaxFPS = 30
 	}
-	start := &pb.DesktopClientMessage{Msg: &pb.DesktopClientMessage_Start{Start: &pb.DesktopStart{
-		Display: int32(o.Display), Codecs: []string{"h264"}, MaxFps: int32(o.MaxFPS),
-		BitrateKbps: int32(o.BitrateKbps), ViewOnly: o.ViewOnly}}}
+	if err := quality.Valid(o.Quality); err != nil {
+		cancel()
+		return nil, err
+	}
+	d := &Desktop{ctx: ctx, cancel: cancel, preset: o.Quality}
 	open := func() (pb.RemoteDesktop_StreamClient, error) {
+		d.mu.Lock()
+		start := &pb.DesktopStart{Display: int32(o.Display), Codecs: []string{"h264"}, MaxFps: int32(o.MaxFPS),
+			BitrateKbps: int32(o.BitrateKbps), ViewOnly: o.ViewOnly}
+		if d.preset != "" {
+			start.Quality = &pb.DesktopQuality{Preset: d.preset}
+		}
+		d.mu.Unlock()
 		st, err := cn.RemoteDesktop().Stream(ctx, grpc.WaitForReady(true))
 		if err == nil {
-			err = st.Send(start)
+			err = st.Send(&pb.DesktopClientMessage{Msg: &pb.DesktopClientMessage_Start{Start: start}})
 		}
 		return st, err
 	}
@@ -78,7 +94,7 @@ func (c *Core) OpenDesktop(worker string, o DesktopOptions, ev DesktopEvents) (*
 		c.forget(worker, err)
 		return nil, err
 	}
-	d := &Desktop{ctx: ctx, cancel: cancel, st: st}
+	d.st = st
 	go func() {
 		var switching bool
 		for {
@@ -116,6 +132,7 @@ func (c *Core) OpenDesktop(worker string, o DesktopOptions, ev DesktopEvents) (*
 			case *pb.DesktopServerMessage_Started:
 				s := v.Started
 				ev.Started(int(s.Width), int(s.Height), s.Codec, len(s.Displays))
+				ev.Quality(s.Quality, s.QualityLevel, int(s.Fps), int(s.BitrateKbps))
 			case *pb.DesktopServerMessage_Frame:
 				f := v.Frame
 				if len(f.Data) > 0 {
@@ -185,6 +202,19 @@ func (d *Desktop) Key(scan int, down bool) {
 // Text types Unicode text (the soft keyboard, IMEs, paste).
 func (d *Desktop) Text(s string) {
 	d.input(&pb.DesktopInput{Event: &pb.DesktopInput_Text{Text: s}})
+}
+
+// SetQuality asks for another picture quality (a preset; the worker
+// starts a new picture: Started, Quality).
+func (d *Desktop) SetQuality(preset string) error {
+	if err := quality.Valid(preset); err != nil {
+		return err
+	}
+	d.mu.Lock()
+	d.preset = preset
+	d.mu.Unlock()
+	d.send(&pb.DesktopClientMessage{Msg: &pb.DesktopClientMessage_Quality{Quality: &pb.DesktopQuality{Preset: preset}}})
+	return nil
 }
 
 // SecureAttention sends Ctrl+Alt+Del.

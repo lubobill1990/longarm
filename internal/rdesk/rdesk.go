@@ -23,6 +23,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"longarm/internal/rdesk/quality"
 	"longarm/internal/screen"
 	"longarm/internal/vdisplay"
 	pb "longarm/proto/longarm/v1"
@@ -79,6 +80,7 @@ func Serve(st Stream, start *pb.DesktopStart, log *slog.Logger) error {
 		s.fps = defaultFPS
 	}
 	s.fps = min(s.fps, maxFPS)
+	s.setQuality(start.GetQuality().GetPreset())
 	if !start.GetViewOnly() {
 		in, err := screen.NewInjector()
 		if err != nil {
@@ -133,8 +135,15 @@ type session struct {
 	ackCh       chan struct{}
 	kfCh        chan struct{}
 
-	mu     sync.Mutex
-	origin [2]int // the display's desktop coordinates (input is relative to it)
+	mu      sync.Mutex
+	origin  [2]int // the display's desktop coordinates (input is relative to it)
+	source  [2]int // the display's size (even) ...
+	picture [2]int // ... and the picture's (smaller at a lower quality): input and the cursor are in its pixels
+
+	qMu     sync.Mutex
+	preset  string           // DesktopQuality.preset asked for ("" = the default)
+	adapter *quality.Adapter // preset "auto"
+	level   quality.Level    // the level in force (preset "" : zero)
 
 	sendMu sync.Mutex       // frames and clipboard text come from two goroutines
 	clip   screen.Clipboard // nil: no clipboard here
@@ -258,6 +267,49 @@ func (s *session) setOptions(o *pb.DesktopOptions) {
 	s.optMu.Unlock()
 	s.send(&pb.DesktopServerMessage{Msg: &pb.DesktopServerMessage_State{State: &pb.DesktopState{
 		Options: &pb.DesktopOptions{Privacy: &privacy, LockOnLeave: &lock, Sound: &sound, Microphone: &mic, VirtualDisplay: &vd}}}})
+}
+
+// setQuality takes the preset the viewer asked for (unknown: the
+// default); the capture loop opens the picture again at its size.
+func (s *session) setQuality(preset string) {
+	if quality.Valid(preset) != nil {
+		preset = ""
+	}
+	s.qMu.Lock()
+	defer s.qMu.Unlock()
+	s.preset, s.adapter, s.level = preset, nil, quality.Level{}
+	switch preset {
+	case "":
+	case quality.Auto:
+		s.adapter = quality.NewAdapter()
+		s.level = s.adapter.Level()
+	default:
+		s.level, _ = quality.Find(preset)
+	}
+}
+
+// observe tells "auto" how the last frame went: elapsed since the one
+// before, waited of it for acks. true: another level (open the picture
+// again).
+func (s *session) observe(elapsed, waited time.Duration) bool {
+	s.qMu.Lock()
+	defer s.qMu.Unlock()
+	if s.adapter == nil || !s.adapter.Observe(elapsed.Seconds(), waited.Seconds()) {
+		return false
+	}
+	s.level = s.adapter.Level()
+	s.log.Info("remote desktop: quality", "level", s.level.Name)
+	return true
+}
+
+// frameRate is the frames per second in force.
+func (s *session) frameRate() int {
+	s.qMu.Lock()
+	defer s.qMu.Unlock()
+	if s.level.FPS > 0 {
+		return min(s.level.FPS, s.fps)
+	}
+	return s.fps
 }
 
 // VirtualDisplays: this process may add a virtual display (the Longarm
@@ -396,7 +448,7 @@ func sessionsPB() []*pb.DesktopSession {
 
 // can: what this worker offers (DesktopStarted.can).
 func (s *session) can() []string {
-	var out []string
+	out := []string{"quality"}
 	if runtime.GOOS == "windows" { // elsewhere: todo/remote-desktop.md
 		out = append(out, "privacy", "lock_on_leave")
 	}
@@ -458,6 +510,9 @@ func (s *session) recv(ctx context.Context) error {
 		case *pb.DesktopClientMessage_SwitchDisplay:
 			s.display.Store(v.SwitchDisplay)
 			signal(s.switchCh)
+		case *pb.DesktopClientMessage_Quality:
+			s.setQuality(v.Quality.GetPreset())
+			signal(s.switchCh) // a new picture: its size, rate and bitrate
 		case *pb.DesktopClientMessage_Input:
 			if s.in != nil {
 				if err := s.input(v.Input); err != nil {
@@ -478,6 +533,7 @@ func signal(c chan struct{}) {
 func (s *session) input(e *pb.DesktopInput) error {
 	s.mu.Lock()
 	ox, oy := s.origin[0], s.origin[1]
+	src, pic := s.source, s.picture
 	s.mu.Unlock()
 	switch v := e.Event.(type) {
 	case *pb.DesktopInput_Mouse:
@@ -485,7 +541,11 @@ func (s *session) input(e *pb.DesktopInput) error {
 		if m.WheelX != 0 || m.WheelY != 0 {
 			return s.in.Wheel(int(m.WheelX), int(m.WheelY))
 		}
-		if err := s.in.Move(ox+int(m.X), oy+int(m.Y)); err != nil {
+		x, y := int(m.X), int(m.Y)
+		if pic[0] > 0 && pic != src { // a smaller picture: back to the display's pixels
+			x, y = x*src[0]/pic[0], y*src[1]/pic[1]
+		}
+		if err := s.in.Move(ox+x, oy+y); err != nil {
 			return err
 		}
 		if m.Button != 0 {
@@ -504,7 +564,10 @@ func (s *session) input(e *pb.DesktopInput) error {
 // pipeline is what turns a source's frames into messages.
 type pipeline struct {
 	src    screen.Source
-	w, h   int // even
+	sw, sh int // the display, even
+	w, h   int // the picture: the display's, or smaller (quality)
+	sc     *scaler
+	cursor *scaler // the cursor's shape at the picture's scale
 	codec  string
 	enc    screen.VideoEncoder
 	prev   []byte // jpeg: the last frame sent
@@ -528,7 +591,22 @@ func (s *session) open() (*pipeline, error) {
 	}
 	p := &pipeline{src: src}
 	w, h := src.Size()
-	p.w, p.h = w&^1, h&^1
+	p.sw, p.sh = w&^1, h&^1
+	s.qMu.Lock()
+	preset, level := s.preset, s.level
+	s.qMu.Unlock()
+	p.w, p.h = quality.Size(p.sw, p.sh, level.MaxHeight)
+	if p.w != p.sw || p.h != p.sh {
+		p.sc = newScaler(p.sw, p.sh, p.w, p.h)
+	}
+	fps := s.frameRate()
+	bitrate := int(s.start.GetBitrateKbps()) * 1000
+	if level.Kbps > 0 {
+		bitrate = level.Kbps * 1000
+	}
+	if bitrate <= 0 {
+		bitrate = min(max(p.w*p.h*2, 2_000_000), 20_000_000)
+	}
 	want := s.start.GetCodecs()
 	if len(want) == 0 {
 		want = Codecs()
@@ -537,11 +615,7 @@ func (s *session) open() (*pipeline, error) {
 	for _, c := range want {
 		switch c {
 		case "h264":
-			bitrate := int(s.start.GetBitrateKbps()) * 1000
-			if bitrate <= 0 {
-				bitrate = min(max(p.w*p.h*2, 2_000_000), 20_000_000)
-			}
-			p.enc, encErr = screen.NewH264Encoder(screen.EncoderOptions{Width: p.w, Height: p.h, FPS: s.fps, Bitrate: bitrate})
+			p.enc, encErr = screen.NewH264Encoder(screen.EncoderOptions{Width: p.w, Height: p.h, FPS: fps, Bitrate: bitrate})
 			if encErr == nil {
 				p.codec = "h264"
 			}
@@ -562,15 +636,19 @@ func (s *session) open() (*pipeline, error) {
 	d := src.Display()
 	s.mu.Lock()
 	s.origin = [2]int{d.X, d.Y}
+	s.source, s.picture = [2]int{p.sw, p.sh}, [2]int{p.w, p.h}
 	s.mu.Unlock()
 	encoder := "jpeg"
 	if p.enc != nil {
 		encoder = p.enc.Name()
+	} else {
+		bitrate = 0 // JPEG tiles: no bitrate to speak of
 	}
 	return p, s.send(&pb.DesktopServerMessage{Msg: &pb.DesktopServerMessage_Started{Started: &pb.DesktopStarted{
 		Width: int32(p.w), Height: int32(p.h), Codec: p.codec, Encoder: encoder,
 		Displays: displays(), Can: s.can(), Sessions: sessionsPB(),
 		Display: &pb.DesktopDisplay{Index: int32(d.Index), Name: d.Name, X: int32(d.X), Y: int32(d.Y), Width: int32(d.W), Height: int32(d.H)},
+		Quality: preset, QualityLevel: level.Name, Fps: int32(fps), BitrateKbps: int32(bitrate / 1000),
 	}}})
 }
 
@@ -583,12 +661,17 @@ func (s *session) capture(ctx context.Context) error {
 			p.close()
 		}
 	}()
-	interval := time.Second / time.Duration(s.fps)
+	interval := time.Second / time.Duration(s.frameRate())
 	hidden := false
 	var lastCursor screen.Cursor
 	refresh := 0
+	// "auto": how long each frame waited for acks (the link's share)
+	var waited time.Duration
+	var lastSent time.Time
 	for ctx.Err() == nil {
 		if p == nil {
+			interval = time.Second / time.Duration(s.frameRate())
+			lastSent, waited = time.Time{}, 0
 			var err error
 			if p, err = s.open(); err != nil {
 				if errors.Is(err, screen.ErrUnsupported) {
@@ -619,6 +702,7 @@ func (s *session) capture(ctx context.Context) error {
 			refresh = 0
 		}
 		// Flow control: wait for the viewer.
+		waitFrom := time.Now()
 		for s.sent.Load()-s.acked.Load() >= window && ctx.Err() == nil {
 			select {
 			case <-s.ackCh:
@@ -629,6 +713,7 @@ func (s *session) capture(ctx context.Context) error {
 				s.acked.Store(s.sent.Load())
 			}
 		}
+		waited += time.Since(waitFrom)
 		if wait := interval - time.Since(p.sentAt); wait > 0 {
 			time.Sleep(wait) // pace before capturing, so the frame is fresh
 		}
@@ -670,6 +755,15 @@ func (s *session) capture(ctx context.Context) error {
 		if err := s.sendFrame(p, keyframe); err != nil {
 			return err
 		}
+		// Only time with frames to send says what the link carries (a
+		// still screen waits for nothing).
+		now := time.Now()
+		if !lastSent.IsZero() && s.observe(min(now.Sub(lastSent), time.Second), min(waited, time.Second)) {
+			p.close()
+			p = nil // the next level's picture
+			continue
+		}
+		lastSent, waited = now, 0
 	}
 	return nil
 }
@@ -679,9 +773,18 @@ func (s *session) sendCursor(p *pipeline, last *screen.Cursor) error {
 	if c.X == last.X && c.Y == last.Y && c.Visible == last.Visible && c.ShapeID == last.ShapeID {
 		return nil
 	}
-	m := &pb.DesktopCursor{X: int32(c.X), Y: int32(c.Y), Visible: c.Visible, ShapeId: c.ShapeID}
+	m := &pb.DesktopCursor{X: int32(c.X * p.w / p.sw), Y: int32(c.Y * p.h / p.sh), Visible: c.Visible, ShapeId: c.ShapeID}
 	if c.ShapeID != last.ShapeID && c.BGRA != nil {
 		m.Width, m.Height, m.HotX, m.HotY, m.Bgra = int32(c.W), int32(c.H), int32(c.HotX), int32(c.HotY), c.BGRA
+		// a smaller picture: a smaller shape too
+		if cw, ch := c.W*p.w/p.sw, c.H*p.h/p.sh; p.sc != nil && cw > 0 && ch > 0 && len(c.BGRA) >= c.W*c.H*4 {
+			if p.cursor == nil || p.cursor.sw != c.W || p.cursor.sh != c.H {
+				p.cursor = newScaler(c.W, c.H, cw, ch)
+			}
+			m.Width, m.Height = int32(cw), int32(ch)
+			m.HotX, m.HotY = int32(c.HotX*p.w/p.sw), int32(c.HotY*p.h/p.sh)
+			m.Bgra = slices.Clone(p.cursor.scale(c.BGRA))
+		}
 	}
 	*last = c
 	last.BGRA = nil
@@ -691,15 +794,18 @@ func (s *session) sendCursor(p *pipeline, last *screen.Cursor) error {
 func (s *session) sendFrame(p *pipeline, keyframe bool) error {
 	captured := time.Now()
 	frame := p.src.Frame()
-	if w, _ := p.src.Size(); w != p.w {
+	if w, _ := p.src.Size(); w != p.sw {
 		// Odd width: drop the last column (H.264 wants even sizes).
 		if p.crop == nil {
-			p.crop = make([]byte, p.w*p.h*4)
+			p.crop = make([]byte, p.sw*p.sh*4)
 		}
-		for y := 0; y < p.h; y++ {
-			copy(p.crop[y*p.w*4:(y+1)*p.w*4], frame[y*w*4:])
+		for y := 0; y < p.sh; y++ {
+			copy(p.crop[y*p.sw*4:(y+1)*p.sw*4], frame[y*w*4:])
 		}
 		frame = p.crop
+	}
+	if p.sc != nil {
+		frame = p.sc.scale(frame)
 	}
 	f := &pb.DesktopFrame{Captured: timestamppb.New(captured)}
 	switch p.codec {

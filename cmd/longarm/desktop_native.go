@@ -18,6 +18,7 @@ import (
 	"google.golang.org/grpc"
 
 	"longarm/internal/client"
+	"longarm/internal/rdesk/quality"
 	"longarm/internal/screen"
 	pb "longarm/proto/longarm/v1"
 )
@@ -36,6 +37,7 @@ type nativeOpts struct {
 	noSound    bool   // the worker's sound stays there
 	microphone bool   // start with your microphone on the worker
 	virtual    string // --virtual-display WxH: add one and show it
+	quality    string // --quality: a preset (internal/rdesk/quality)
 }
 
 // startOptions: the options asked for on the command line (nil: none).
@@ -96,11 +98,18 @@ func nativeDesktop(ctx context.Context, conn *client.Conn, worker string, o nati
 	// with them).
 	var optMu sync.Mutex
 	inForce := startOptions(o)
+	if err := quality.Valid(o.quality); err != nil {
+		return usagef("--quality: %v", err)
+	}
+	preset := o.quality // the quality asked for last (a new stream starts with it)
 	startMsg := func() *pb.DesktopClientMessage {
 		optMu.Lock()
 		defer optMu.Unlock()
-		return &pb.DesktopClientMessage{Msg: &pb.DesktopClientMessage_Start{Start: &pb.DesktopStart{
-			Display: int32(o.display), Codecs: codecs, MaxFps: int32(fps), ViewOnly: o.viewOnly, Options: inForce}}}
+		start := &pb.DesktopStart{Display: int32(o.display), Codecs: codecs, MaxFps: int32(fps), ViewOnly: o.viewOnly, Options: inForce}
+		if preset != "" {
+			start.Quality = &pb.DesktopQuality{Preset: preset}
+		}
+		return &pb.DesktopClientMessage{Msg: &pb.DesktopClientMessage_Start{Start: start}}
 	}
 	var vdMode *pb.DesktopVirtualDisplay
 	if o.virtual != "" {
@@ -195,14 +204,21 @@ func nativeDesktop(ctx context.Context, conn *client.Conn, worker string, o nati
 			case *pb.DesktopServerMessage_Started:
 				s := v.Started
 				p = screen.VideoPacket{Config: true, Width: int(s.Width), Height: int(s.Height), Codec: s.Codec,
-					Display: int(s.GetDisplay().GetIndex()), Can: s.Can}
+					Display: int(s.GetDisplay().GetIndex()), Can: s.Can, Quality: s.Quality, QualityLevel: s.QualityLevel}
 				for _, d := range s.Displays {
 					p.Displays = append(p.Displays, screen.Display{Index: int(d.Index), Name: d.Name, X: int(d.X), Y: int(d.Y), W: int(d.Width), H: int(d.Height)})
 				}
 				for _, x := range s.Sessions {
 					p.Sessions = append(p.Sessions, screen.Session{ID: x.Id, User: x.User, State: x.State, Station: x.Station, Console: x.Console})
 				}
-				info.Store(fmt.Sprintf("%s (%s) %dx%d", s.Codec, s.Encoder, s.Width, s.Height))
+				desc := fmt.Sprintf("%s (%s) %dx%d", s.Codec, s.Encoder, s.Width, s.Height)
+				switch {
+				case s.Quality == quality.Auto:
+					desc += " auto: " + s.QualityLevel
+				case s.QualityLevel != "":
+					desc += " " + s.QualityLevel
+				}
+				info.Store(desc)
 			case *pb.DesktopServerMessage_Frame:
 				f := v.Frame
 				received.Add(int64(len(f.Data)))
@@ -344,6 +360,12 @@ func nativeDesktop(ctx context.Context, conn *client.Conn, worker string, o nati
 		},
 		SetVirtualDisplay: func(on bool, w, h int) {
 			send(&pb.DesktopClientMessage{Msg: &pb.DesktopClientMessage_VirtualDisplay{VirtualDisplay: &pb.DesktopVirtualDisplay{On: on, Width: int32(w), Height: int32(h)}}})
+		},
+		SetQuality: func(p string) {
+			optMu.Lock()
+			preset = p
+			optMu.Unlock()
+			send(&pb.DesktopClientMessage{Msg: &pb.DesktopClientMessage_Quality{Quality: &pb.DesktopQuality{Preset: p}}})
 		},
 	}
 	if !o.viewOnly {

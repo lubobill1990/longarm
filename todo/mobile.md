@@ -1,12 +1,5 @@
 # The phone app (docs/mobile.md)
 
-## The desktop on mobile data
-
-The viewer asks for 30 fps and the worker's default bitrate on every
-network. On mobile data it should ask for less (`DesktopOptions.MaxFPS`,
-`BitrateKbps`; Android `ConnectivityManager`, iOS `NWPathMonitor`) and
-offer the choice in the viewer's bar.
-
 ## The desktop: clipboard, sound, displays, direct touch
 
 The phone viewer has no clipboard sync, no sound, no display switch (the

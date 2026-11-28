@@ -66,6 +66,10 @@ Screen Recording and Accessibility for the runner). Left out:
   pane when `NativeReason` says one is missing.
 - **The login window and lock screen** cannot be captured from a
   LaunchAgent; longarmd as a LaunchDaemon says so (`Available`).
+- **A quality menu.** The macOS (and Linux) viewer has no bar: the picture
+  quality is `--quality` only, fixed for the session. The Windows bar's
+  menu (`qualityMenu`, bar_windows.go) is the model; `Chrome.SetQuality`
+  is wired up already.
 
 ## Native remote desktop: the viewer's own title bar (UU Remote's features)
 

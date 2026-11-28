@@ -103,6 +103,42 @@ func TestRemoteDesktop(t *testing.T) {
 	}
 	checkPattern(t, "after input", filepath.Join(e.root, "after-input.png"), w, h, true)
 
+	// A lower quality (internal/rdesk/quality): a smaller picture of the
+	// same screen, and input in the picture's pixels lands where it shows.
+	const lines = 540 // "minimal"
+	if h > lines {
+		pw, ph := (w*lines/h)&^1, lines
+		shot := filepath.Join(e.root, "minimal.png")
+		r := e.longarm(e.client, "desktop", "w1", "--native", "--quality", "minimal", "--screenshot", shot,
+			"--input", fmt.Sprintf("click:%d,%d", pw/2, ph/2))
+		if r.code != 0 {
+			t.Fatalf("--quality minimal: exit %d\n%s%s", r.code, r.stdout, r.stderr)
+		}
+		f, err := os.Open(shot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := png.DecodeConfig(f)
+		f.Close()
+		if err != nil || cfg.Width != pw || cfg.Height != ph {
+			t.Fatalf("--quality minimal: a %dx%d picture (%v), want %dx%d", cfg.Width, cfg.Height, err, pw, ph)
+		}
+		checkPattern(t, "minimal", shot, pw, ph, true)
+		waitFor(t, "the helper to log the second click", 15*time.Second, func() bool {
+			b, _ := os.ReadFile(logPath)
+			return strings.Count(string(b), "click ") >= 2
+		})
+		b, _ := os.ReadFile(logPath)
+		s := string(b)
+		last := s[strings.LastIndex(s, "click "):]
+		if _, err := fmt.Sscanf(strings.SplitN(last, "\n", 2)[0], "click %d %d", &cx, &cy); err != nil {
+			t.Fatalf("helper log: %v\n%s", err, b)
+		}
+		if slack := w/pw + 3; abs(cx-w/2) > slack || abs(cy-h/2) > slack {
+			t.Errorf("--quality minimal: the click landed at %d,%d, want about %d,%d", cx, cy, w/2, h/2)
+		}
+	}
+
 	// Privacy mode (Windows): the worker's own screen goes black, the viewer
 	// still sees the desktop - the curtain is not in the capture. Elsewhere
 	// the worker answers that it is off.

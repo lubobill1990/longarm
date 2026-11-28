@@ -216,7 +216,20 @@ service Desktop {
 Flow control: at most N (≈3) unacked frames in flight. Capture waits
 instead of queueing, and the dirty rectangles accumulate in DXGI meanwhile,
 so a slow link shows fewer but current frames (the spike already behaves
-this way). The H.264 bitrate follows the measured ack rate.
+this way).
+
+Quality (`DesktopQuality`, internal/rdesk/quality): a preset sets the
+picture's size, frame rate and bitrate together - high (the display's
+size), balanced (1080p, 30 fps, 4 Mbit/s), low (720p, 15 fps, 1 Mbit/s),
+minimal (540p, 8 fps, 300 kbit/s) - and "auto" moves along them: rounds
+of 3 s of frames being sent, a level down when more than 35% of a round
+went waiting for acks (the link is the limit), a level up after 15 s of no
+more than 5%. A still screen sends nothing and counts for nothing. The
+worker scales the capture down (bilinear, internal/rdesk/scale.go) before
+the encoder; input and the cursor (its shape too) are in the picture's
+pixels. A change opens the picture again (a new Started, a key frame).
+Without a preset the worker sends the display's size at max_fps and a
+bitrate from its size, as before.
 
 The node connection already does direct-or-relay and end-to-end keys. A
 gRPC stream over the relay adds a TCP hop. That is acceptable for v0;

@@ -1634,6 +1634,22 @@ bar's sessions button lists them (and the one shown); choosing one moves
 it to the console - one in use over Remote Desktop asks first, since that
 window loses it. The viewer stays open and connects again by itself.
 
+**Picture quality**: on a slow connection (mobile data, a hotel's Wi-Fi)
+fewer pixels, frames and bits keep the desktop usable. The bar's quality
+button (the phone app's Quality button) or `--quality` chooses:
+
+| quality | picture |
+|---|---|
+| `auto` | follows the connection: a level down while frames wait for the link, back up once it keeps up (the phone app's default) |
+| `high` | the display's size and frame rate (the window's default) |
+| `balanced` | at most 1080p, 30 fps, 4 Mbit/s |
+| `low` | at most 720p, 15 fps, 1 Mbit/s |
+| `minimal` | at most 540p, 8 fps, 300 kbit/s |
+
+`longarm desktop w1 --quality low`; the title shows the level in force
+("auto: low"). It changes without reconnecting. Workers from before
+quality presets ignore it.
+
 **A virtual display** (Windows workers with the Longarm Desktop service,
 Windows 10 2004 or newer): the bar's display menu adds one of this screen's
 size to the worker and shows it - a screen for a machine without a monitor
