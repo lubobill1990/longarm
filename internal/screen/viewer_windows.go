@@ -242,6 +242,7 @@ func runViewer(o ViewerOptions) error {
 			canvas.inset = win.TopInset()
 			if c := o.Chrome; c != nil {
 				c.Displays, c.Display, c.Sessions = p.Displays, p.Display, p.Sessions
+				c.Quality, c.QualityLevel = p.Quality, p.QualityLevel
 				c.Can = map[string]bool{}
 				for _, s := range p.Can {
 					c.Can[s] = true

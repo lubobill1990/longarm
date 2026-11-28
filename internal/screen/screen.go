@@ -145,6 +145,9 @@ type VideoPacket struct {
 	Display  int
 	Can      []string
 	Sessions []Session // the machine's Windows sessions (can "sessions")
+	// Quality: the preset in force ("" = the default; can "quality") and,
+	// for "auto", its level now.
+	Quality, QualityLevel string
 	// Options: the options in force changed (privacy, lock_on_leave, sound,
 	// microphone).
 	Options map[string]bool
@@ -257,4 +260,8 @@ type Chrome struct {
 	// SetVirtualDisplay adds a virtual display of w×h to the worker (can
 	// "virtual_display"; On["virtual_display"] once it is up) or removes it.
 	SetVirtualDisplay func(on bool, w, h int)
+	// Quality is the preset in force, QualityLevel auto's level now (can
+	// "quality"); SetQuality asks for another (internal/rdesk/quality).
+	Quality, QualityLevel string
+	SetQuality            func(preset string)
 }

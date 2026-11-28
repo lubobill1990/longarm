@@ -28,6 +28,9 @@ final class DesktopViewController: UIViewController, CoreDesktopListenerProtocol
     private var hot = CGPoint.zero
     private let note = UILabel()
     private let keys = KeyView()
+    private let qualityButton = UIButton(type: .system)
+    // the quality asked for (internal/rdesk/quality): saved for next time
+    private var preset = UserDefaults.standard.string(forKey: "desktopQuality") ?? "auto"
 
     init(worker: String) {
         self.worker = worker
@@ -58,7 +61,7 @@ final class DesktopViewController: UIViewController, CoreDesktopListenerProtocol
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
             var err: NSError?
-            let d = CoreOpenDesktop(self.worker, 0, 30, 0, self, &err)
+            let d = CoreOpenDesktop(self.worker, 0, 30, 0, self.preset, self, &err)
             DispatchQueue.main.async {
                 if let err { self.show("Can't open the desktop of \(self.worker): \(err.localizedDescription)") }
                 self.desktop = d
@@ -98,6 +101,10 @@ final class DesktopViewController: UIViewController, CoreDesktopListenerProtocol
             b.addAction(UIAction { _ in action() }, for: .touchUpInside)
             stack.addArrangedSubview(b)
         }
+        qualityButton.setTitle(Self.qualityLabel(preset, ""), for: .normal)
+        qualityButton.setTitleColor(.white, for: .normal)
+        qualityButton.addAction(UIAction { [weak self] _ in self?.chooseQuality() }, for: .touchUpInside)
+        stack.addArrangedSubview(qualityButton)
         stack.translatesAutoresizingMaskIntoConstraints = false
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
@@ -147,6 +154,40 @@ final class DesktopViewController: UIViewController, CoreDesktopListenerProtocol
             self.cursor.isHidden = !visible
             self.placeCursor()
         }
+    }
+
+    func quality(_ preset: String?, level: String?, fps: Int, kbps: Int) {
+        let label = Self.qualityLabel(preset ?? "", level ?? "")
+        DispatchQueue.main.async { self.qualityButton.setTitle(label, for: .normal) }
+    }
+
+    /// the bar's quality button: "Auto: low", "Balanced"
+    static func qualityLabel(_ preset: String, _ level: String) -> String {
+        if preset.isEmpty { return "Quality" }
+        var name = preset.prefix(1).uppercased() + preset.dropFirst()
+        if preset == "auto" && !level.isEmpty { name += ": " + level }
+        return name
+    }
+
+    /// the quality presets (CoreQualityPresets): fewer pixels, frames and bits for a slow connection
+    private func chooseQuality() {
+        let sheet = UIAlertController(title: "Picture quality", message: nil, preferredStyle: .actionSheet)
+        for line in CoreQualityPresets().split(separator: "\n") {
+            let parts = line.split(separator: "\t", maxSplits: 1).map(String.init)
+            guard let name = parts.first else { continue }
+            let label = (parts.count > 1 ? parts[1] : name) + (name == preset ? " ✓" : "")
+            sheet.addAction(UIAlertAction(title: label, style: .default) { [weak self] _ in
+                guard let self else { return }
+                self.preset = name
+                UserDefaults.standard.set(name, forKey: "desktopQuality")
+                self.qualityButton.setTitle(Self.qualityLabel(name, ""), for: .normal)
+                let d = self.desktop
+                DispatchQueue.global(qos: .userInitiated).async { try? d?.setQuality(name) }
+            })
+        }
+        sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        sheet.popoverPresentationController?.sourceView = qualityButton // iPad
+        present(sheet, animated: true)
     }
 
     func note(_ text: String?) {

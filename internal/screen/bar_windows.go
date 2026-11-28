@@ -9,6 +9,8 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
+
+	"longarm/internal/rdesk/quality"
 )
 
 // The viewer's own title bar (Chrome). In a window it is the window's title
@@ -72,6 +74,7 @@ const (
 	glyphLock       = string(rune(0xE72E))
 	glyphDisplay    = string(rune(0xE7F4))
 	glyphSession    = string(rune(0xE748)) // SwitchUser
+	glyphQuality    = string(rune(0xE701)) // Wifi: the connection's picture quality
 	glyphSound      = string(rune(0xE767))
 	glyphMic        = string(rune(0xE720))
 	glyphPin        = string(rune(0xE718))
@@ -234,6 +237,9 @@ func (b *bar) layout() {
 		if c.Can["sound"] {
 			add("sound", glyphSound, c.On["sound"], onOff(c.On["sound"], "The worker's sound plays here"))
 		}
+		if c.Can["quality"] && c.SetQuality != nil {
+			add("quality", glyphQuality, false, "Picture quality: "+qualityTip(c))
+		}
 		if c.Can["sessions"] && len(c.Sessions) > 1 {
 			add("session", glyphSession, false, "Windows sessions: show another (Remote Desktop sign-ins, disconnected ones)")
 		}
@@ -366,6 +372,8 @@ func (b *bar) click(id string) {
 		b.sessionMenu()
 	case "display":
 		b.displayMenu()
+	case "quality":
+		b.qualityMenu()
 	}
 	b.layout()
 	procInvalidateRect.Call(b.hwnd, 0, 0)
@@ -411,6 +419,48 @@ func (b *bar) displayMenu() {
 		c.SetVirtualDisplay(false, 0, 0)
 	case sel > 0 && int(sel)-1 != c.Display:
 		c.SwitchDisplay(int(sel) - 1)
+	}
+}
+
+// qualityTip: the quality in force ("Auto, now Low bandwidth (720p, ...)").
+func qualityTip(c *Chrome) string {
+	switch {
+	case c.Quality == "":
+		return "the worker's default (full size)"
+	case c.Quality == quality.Auto && c.QualityLevel != "":
+		return "auto, now " + quality.Label(c.QualityLevel)
+	}
+	return quality.Label(c.Quality)
+}
+
+// qualityMenu offers the quality presets (internal/rdesk/quality): fewer
+// pixels, frames and bits for a slow connection.
+func (b *bar) qualityMenu() {
+	c := b.owner.Chrome
+	if c == nil || c.SetQuality == nil {
+		return
+	}
+	m, _, _ := procCreatePopupMenu.Call()
+	defer procDestroyMenu.Call(m)
+	presets := quality.Presets()
+	for i, p := range presets {
+		flags := uintptr(0)
+		if p == c.Quality {
+			flags = 0x8 // MF_CHECKED
+		}
+		label := quality.Label(p)
+		if p == quality.Auto && c.Quality == quality.Auto && c.QualityLevel != "" {
+			label += "  - now " + c.QualityLevel
+		}
+		l, _ := windows.UTF16PtrFromString(label)
+		procAppendMenuW.Call(m, flags, uintptr(i+1), uintptr(unsafe.Pointer(l)))
+	}
+	var p point
+	procGetCursorPos.Call(uintptr(unsafe.Pointer(&p)))
+	const tpmReturnCmd, tpmNonotify = 0x0100, 0x0080
+	sel, _, _ := procTrackPopupMenu.Call(m, tpmReturnCmd|tpmNonotify, uintptr(p.X), uintptr(p.Y), 0, b.hwnd, 0)
+	if sel > 0 && int(sel) <= len(presets) && presets[sel-1] != c.Quality {
+		c.SetQuality(presets[sel-1])
 	}
 }
 

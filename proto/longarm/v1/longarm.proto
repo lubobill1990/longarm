@@ -1234,7 +1234,18 @@ message DesktopClientMessage {
     DesktopAudio microphone = 8; // the viewer's microphone (DesktopOptions.microphone)
     uint32 switch_session = 9; // show this session: move it to the console (DesktopSession.id)
     DesktopVirtualDisplay virtual_display = 10; // add (or remove) a virtual display
+    DesktopQuality quality = 11; // another picture quality (can "quality")
   }
+}
+
+// DesktopQuality: how much picture the link carries. A preset sets the
+// size, frame rate and bitrate together (internal/rdesk/quality):
+// "auto" follows the link (fewer pixels and frames while the viewer's
+// acks lag, more again once they keep up), "high", "balanced", "low",
+// "minimal". "" = the worker's default (the display's size, max_fps,
+// bitrate_kbps).
+message DesktopQuality {
+  string preset = 1;
 }
 
 message DesktopStart {
@@ -1245,6 +1256,7 @@ message DesktopStart {
   int32 bitrate_kbps = 4; // 0 = the worker picks
   bool view_only = 5; // input is refused
   DesktopOptions options = 6; // the options to start with
+  DesktopQuality quality = 7; // the quality to start with (over max_fps, bitrate_kbps)
 }
 
 message DesktopInput {
@@ -1301,6 +1313,14 @@ message DesktopStarted {
   // service's agent): the console's, which is shown, and the users' others
   // (Remote Desktop sign-ins, disconnected ones) the viewer may switch to.
   repeated DesktopSession sessions = 8;
+  // The quality in force (can "quality"): the preset asked for ("auto",
+  // "" = the default) and, for auto, the level it is at now ("low"). The
+  // picture is width x height, scaled down from display when smaller;
+  // input and the cursor are in the picture's pixels.
+  string quality = 9;
+  string quality_level = 10;
+  int32 fps = 11;
+  int32 bitrate_kbps = 12;
 }
 
 // DesktopSession is a Windows session (screen.Session).

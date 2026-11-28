@@ -80,8 +80,10 @@ attach to their terminal sessions, see and use their desktops. TestFlight
   drag drags, pinch zooms (the view follows the pointer). The keyboard
   button opens the soft keyboard: text goes as Unicode, the IME's
   composing text as it changes (Backspace over what changed), Backspace /
-  Enter / arrows as keys; the bar has Esc, the Windows key and
-  Ctrl+Alt+Del.
+  Enter / arrows as keys; the bar has Esc, the Windows key,
+  Ctrl+Alt+Del and the picture quality (internal/rdesk/quality; "auto" by
+  default, which follows the connection - mobile data gets a smaller
+  picture; the choice is kept).
 - `go run ./internal/mobile/devserve -dir <config dir>` runs the core on a
   computer, for working on the UI.
 

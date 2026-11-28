@@ -65,12 +65,15 @@ public class DesktopActivity extends Activity implements core.DesktopListener {
     private TextView note;
     private KeyView keys;
     private String worker;
+    private Button qualityButton;
+    private String preset; // the quality asked for (internal/rdesk/quality): saved for next time
 
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON | WindowManager.LayoutParams.FLAG_FULLSCREEN);
         worker = getIntent().getStringExtra(EXTRA_WORKER);
+        preset = getSharedPreferences("desktop", MODE_PRIVATE).getString("quality", "auto");
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
         view = new TextureView(this);
@@ -79,7 +82,9 @@ public class DesktopActivity extends Activity implements core.DesktopListener {
         root.addView(cursor, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         keys = new KeyView(this);
         root.addView(keys, new FrameLayout.LayoutParams(1, 1));
-        root.addView(bar(), new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP));
+        android.widget.HorizontalScrollView scroll = new android.widget.HorizontalScrollView(this); // a narrow screen: the bar scrolls
+        scroll.addView(bar());
+        root.addView(scroll, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP));
         note = new TextView(this);
         note.setTextColor(Color.WHITE);
         note.setBackgroundColor(0xAA000000);
@@ -109,6 +114,8 @@ public class DesktopActivity extends Activity implements core.DesktopListener {
         bar.addView(button("Esc", v -> tap(SC_ESC)));
         bar.addView(button("Win", v -> tap(SC_WIN)));
         bar.addView(button("Ctrl+Alt+Del", v -> { if (desktop != null) desktop.secureAttention(); }));
+        qualityButton = button(qualityLabel(preset, ""), v -> chooseQuality());
+        bar.addView(qualityButton);
         return bar;
     }
 
@@ -128,7 +135,7 @@ public class DesktopActivity extends Activity implements core.DesktopListener {
     private void open() {
         new Thread(() -> {
             try {
-                desktop = core.Core.openDesktop(worker, 0, 30, 0, this);
+                desktop = core.Core.openDesktop(worker, 0, 30, 0, preset, this);
             } catch (Exception e) {
                 String msg = e.getMessage() == null ? e.toString() : e.getMessage();
                 ui.post(() -> note.setText("Can't open the desktop of " + worker + ": " + msg));
@@ -216,6 +223,45 @@ public class DesktopActivity extends Activity implements core.DesktopListener {
             cursor.setVisibility(visible ? View.VISIBLE : View.INVISIBLE);
             placeCursor();
         });
+    }
+
+    @Override public void quality(String asked, String level, long fps, long kbps) {
+        String label = qualityLabel(asked, level);
+        ui.post(() -> qualityButton.setText(label));
+    }
+
+    /** the bar's quality button: "Auto: low", "Balanced" */
+    private static String qualityLabel(String asked, String level) {
+        if (asked == null || asked.isEmpty()) return "Quality";
+        String name = cap(asked);
+        if ("auto".equals(asked) && level != null && !level.isEmpty()) name += ": " + level;
+        return name;
+    }
+
+    private static String cap(String s) { return s.isEmpty() ? s : Character.toUpperCase(s.charAt(0)) + s.substring(1); }
+
+    /** the quality presets (core.Core.qualityPresets): fewer pixels, frames and bits for a slow connection */
+    private void chooseQuality() {
+        String[] lines = core.Core.qualityPresets().trim().split("\n");
+        String[] names = new String[lines.length], labels = new String[lines.length];
+        int checked = 0;
+        for (int i = 0; i < lines.length; i++) {
+            String[] p = lines[i].split("\t", 2);
+            names[i] = p[0];
+            labels[i] = p.length > 1 ? p[1] : p[0];
+            if (p[0].equals(preset)) checked = i;
+        }
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("Picture quality")
+                .setSingleChoiceItems(labels, checked, (dlg, which) -> {
+                    preset = names[which];
+                    getSharedPreferences("desktop", MODE_PRIVATE).edit().putString("quality", preset).apply();
+                    qualityButton.setText(qualityLabel(preset, ""));
+                    core.Desktop d = desktop;
+                    if (d != null) new Thread(() -> { try { d.setQuality(preset); } catch (Exception ignored) { } }).start();
+                    dlg.dismiss();
+                })
+                .show();
     }
 
     @Override public void note(String text) {
