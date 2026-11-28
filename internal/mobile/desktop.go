@@ -43,7 +43,7 @@ type DesktopEvents interface {
 // DesktopOptions: what the viewer asks for.
 type DesktopOptions struct {
 	Display     int
-	MaxFPS      int // 0: 30
+	MaxFPS      int    // 0: 30
 	BitrateKbps int    // 0: the worker's choice
 	Quality     string // a preset (internal/rdesk/quality): "auto" follows the link
 	ViewOnly    bool
