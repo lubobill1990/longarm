@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type MutableRefObject } from 'react'
 import { attachSession, type AttachHandlers, type Attachment } from '../api/sessions'
 import { createTerminal, type Term } from './terminal'
 
@@ -20,6 +20,8 @@ export function TerminalView({
   visible,
   onOutput,
   onExit,
+  touch,
+  send,
 }: {
   worker: string
   session: string
@@ -29,6 +31,10 @@ export function TerminalView({
   /** output arrived (badges on background tabs) */
   onOutput?: () => void
   onExit?: (code: number) => void
+  /** the phone app: keys come from its own input (send), not xterm's */
+  touch?: boolean
+  /** set to a function that types into the session (the phone's key bar and input) */
+  send?: MutableRefObject<((b: Uint8Array<ArrayBuffer>) => void) | undefined>
 }) {
   const el = useRef<HTMLDivElement>(null)
   const term = useRef<Term>(undefined)
@@ -38,12 +44,13 @@ export function TerminalView({
   cb.current = { onOutput, onExit }
 
   useEffect(() => {
-    const t = createTerminal(el.current!)
+    const t = createTerminal(el.current!, { touch })
     term.current = t
     let stopped = false
     let tries = 0
     let timer: ReturnType<typeof setTimeout> | undefined
     t.onInput((b) => conn.current?.input(b))
+    if (send) send.current = (b) => conn.current?.input(b)
     const connect = () => {
       const { cols, rows } = t.size()
       setStatus({ kind: 'connecting' })
@@ -101,7 +108,7 @@ export function TerminalView({
       if (cols !== before.cols || rows !== before.rows) conn.current?.resize(cols, rows)
     }
     fit()
-    term.current?.focus()
+    if (!touch) term.current?.focus()
     if (typeof ResizeObserver === 'undefined') return
     const ro = new ResizeObserver(fit)
     ro.observe(el.current!)

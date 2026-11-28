@@ -51,10 +51,22 @@ attach to their terminal sessions, see and use their desktops. TestFlight
   account and approve; the phone gets a device certificate of its own,
   kept in the app's private storage (later: the key in the Keychain /
   Keystore).
-- **API** (`internal/mobile`): `GET /api/status`, `POST|GET /api/signin`,
-  `GET /api/machines`, `GET /api/machines/{w}/sessions`,
-  `GET /api/machines/{w}/sessions/{name}/attach` (WebSocket,
-  internal/termws - the daemon's terminal protocol).
+- **The UI** is the web frontend's `/m` shell (web/src/mobile, embedded
+  as internal/webui): the tray's machine cards (metrics, state, versions;
+  charts from the samples the page has seen), a machine's sessions with
+  "New terminal" (the worker's shell; Claude Code / Copilot CLI with the
+  worker's own sign-in), the terminal (TerminalView) with a key bar - Esc,
+  Tab, Ctrl / Alt for the next key, arrows, Home / End, PgUp / PgDn - and
+  an input the soft keyboard types into (xterm's own input doubles letters
+  with Android keyboards). Routes are the URL's hash: the back gesture
+  works.
+- **API** (`internal/mobile`, the token as a cookie the page's URL set):
+  `GET /mapi/status`, `POST|GET /mapi/signin`, `POST /mapi/signout`,
+  `GET /mapi/machines` (the user's workers' NodeInfo), and the longarm
+  daemon's session routes at the same paths -
+  `/local/longarm/v1/workers/{w}/sessions` (list, start), `.../{name}`,
+  `.../{name}/stop`, `.../{name}/attach` (WebSocket, internal/termws) - so
+  web/src/api/sessions.ts serves both.
 - `go run ./internal/mobile/devserve -dir <config dir>` runs the core on a
   computer, for working on the UI.
 

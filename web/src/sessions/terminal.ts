@@ -56,10 +56,14 @@ export function clipboardKey(term: ClipboardTerm, e: KeyboardEvent, clip: Clipbo
   return true
 }
 
-export function createTerminal(el: HTMLElement): Term {
+export function createTerminal(el: HTMLElement, opts: { touch?: boolean } = {}): Term {
   const term = new Terminal({
     fontFamily: token(el, '--mono', 'monospace'),
-    fontSize: 13,
+    fontSize: opts.touch ? 12 : 13,
+    // touch (the phone app): the soft keyboard types into an input of its
+    // own (mobile/KeyInput) - xterm's hidden textarea mangles composition
+    // input on Android (letters doubled) and pops the keyboard on every tap
+    disableStdin: !!opts.touch,
     scrollback: 5000,
     cursorBlink: true,
     theme: {
