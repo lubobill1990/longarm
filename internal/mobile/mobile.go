@@ -153,7 +153,9 @@ func (c *Core) routes() http.Handler {
 
 const tokenCookie = "longarm_m"
 
-func (c *Core) valid(t string) bool { return subtle.ConstantTimeCompare([]byte(t), []byte(c.token)) == 1 }
+func (c *Core) valid(t string) bool {
+	return subtle.ConstantTimeCompare([]byte(t), []byte(c.token)) == 1
+}
 
 // auth: the token Start gave, as the cookie the page got, X-Longarm-Token
 // or ?t=; other apps on the phone can reach 127.0.0.1 too.
